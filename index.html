@@ -1,0 +1,835 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>空气净化系统 · 远程控制台</title>
+<style>
+/* 配色沿用"米家灰底白卡"：亮色只做填充、深色只做文字，绝不混用 */
+:root{
+  --bg:#F7F7F7; --card:#FFFFFF; --line:#E5E5E5; --cell:#F7F8FA;
+  --fg:#000000; --dim:#666666; --mute:#999999;
+  --shadow:0 1px 3px rgba(0,0,0,.05);
+  --green:#00AA71; --cyan:#32BAC0; --amber:#F5A623;
+  --red:#F43F31;   --blue:#2563EB; --magenta:#A21CAF;
+  --green-t:#00875A; --cyan-t:#0E7490; --amber-t:#B45309; --red-t:#DC2626;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);
+     font:16px/1.5 -apple-system,"Segoe UI",system-ui,"Microsoft YaHei",sans-serif}
+header{display:flex;align-items:center;justify-content:space-between;gap:8px;
+       padding:14px 16px;background:var(--card);border-bottom:1px solid var(--line)}
+h1{margin:0;font-size:19px;color:var(--green-t);letter-spacing:.5px}
+.hd-right{display:flex;align-items:center;gap:8px;min-width:0}
+select#devsel{max-width:140px;background:#fff;border:1px solid #D0D7DE;border-radius:8px;
+              color:var(--fg);font-size:14px;padding:5px 8px}
+select#devsel.hide{display:none}
+/* 徽章：深填充 + 白字（浅底深字在 13px 下达不到 4.5:1） */
+.badge{padding:5px 14px;border-radius:999px;font-size:13px;font-weight:600;
+       background:var(--green-t);color:#fff;white-space:nowrap}
+.badge.wait{background:var(--amber-t)}
+.badge.off{background:var(--red-t)}
+
+/* ---------- Tab ---------- */
+.tabs{display:flex;background:var(--card);padding:0 6px;
+      border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
+.tab{flex:1;padding:12px 0;border:0;border-bottom:2px solid transparent;border-radius:0;
+     background:none;color:var(--dim);font-size:15px;font-weight:600;
+     -webkit-tap-highlight-color:transparent}
+/* 注意：这里的 background:none 不能省。
+   button.on 会给出 background:var(--green-t)，而 .tab 的 background:none 选择器权重更低
+   （0,1,0 < 0,1,1），单靠 .tab 拦不住 → 选中的 tab 变成深绿底 + 深绿字，字就看不见了。
+   加上 .tab.on 的 background 后权重升到 0,2,0，才压得住 button.on。 */
+.tab.on{color:var(--green-t);background:none;border-bottom-color:var(--green)}
+.page{display:none}
+.page.on{display:block}
+
+main{padding:12px 12px 22px}
+.card{background:var(--card);border-radius:16px;padding:4px 16px;margin:12px 0;
+      box-shadow:var(--shadow)}
+.card-h{font-size:13px;color:var(--dim);font-weight:600;padding:13px 0 6px}
+.row{display:flex;justify-content:space-between;align-items:baseline;
+     padding:11px 0;border-bottom:1px solid var(--line)}
+.card .row:last-child{border-bottom:0}
+.k{color:var(--dim)}
+.v{font-variant-numeric:tabular-nums;font-weight:600}
+.v.expired{color:var(--red-t)}
+
+/* ---------- 颗粒物个数 ---------- */
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:4px 0 12px}
+.cell{display:flex;justify-content:space-between;background:var(--cell);
+      border-radius:8px;padding:9px 12px;font-size:14px}
+.cell span:last-child{color:var(--cyan-t);font-variant-numeric:tabular-nums;font-weight:600}
+
+/* ---------- 综合评级：黑字 + 背后彩色径向渐变 ---------- */
+.aqiwrap{position:relative;overflow:hidden;text-align:center;padding:6px 16px 16px}
+.aqiwrap:before{content:"";position:absolute;inset:0;pointer-events:none;
+                background:radial-gradient(circle at 50% 42%,var(--aqc) 0%,transparent 62%);
+                opacity:.20;transition:background .4s}
+.aqiwrap>*{position:relative}
+.aqi{font-size:30px;font-weight:800;letter-spacing:.5px;color:#000}
+.aq0{--aqc:var(--green)} .aq1{--aqc:var(--cyan)}
+.aq2{--aqc:var(--amber)} .aq3{--aqc:var(--red)}
+
+/* ---------- 按钮 ---------- */
+.bar{display:flex;gap:10px}
+button{flex:1;padding:13px 0;border:0;border-radius:10px;background:#F0F1F3;
+       color:var(--fg);font-size:16px;font-weight:600;transition:.15s;
+       -webkit-tap-highlight-color:transparent}
+button.on{background:var(--green-t);color:#fff}
+button:disabled{opacity:.35}
+button.danger{background:var(--red-t);color:#fff;letter-spacing:.5px}
+button.danger:active{opacity:.85}
+
+/* ---------- 滤纸寿命 ---------- */
+.ftrack{height:10px;background:#EDEEEF;border-radius:6px;overflow:hidden;margin:14px 0 4px}
+.ffill{height:100%;width:100%;border-radius:6px;transition:width .35s ease,background .35s ease}
+.ffill.ok{background:var(--green)}
+.ffill.warn{background:var(--amber)}
+.ffill.bad{background:var(--red)}
+.fmsg{margin-top:10px;font-size:14px;color:var(--dim);min-height:20px;text-align:center}
+
+/* ---------- 定时：滑动开关 + 时间选择 ---------- */
+.trow{display:flex;justify-content:space-between;align-items:center;
+      padding:11px 0;border-bottom:1px solid var(--line)}
+.card .trow:last-of-type{border-bottom:0}
+.switch{position:relative;display:inline-block;width:52px;height:30px;flex:0 0 auto}
+.switch input{opacity:0;width:0;height:0}
+.slider{position:absolute;inset:0;background:#CBD5E1;border-radius:30px;
+        transition:.2s;cursor:pointer}
+.slider:before{content:"";position:absolute;width:24px;height:24px;left:3px;top:3px;
+               background:#fff;border-radius:50%;transition:.2s;
+               box-shadow:0 1px 2px rgba(0,0,0,.2)}
+.switch input:checked + .slider{background:var(--green)}
+.switch input:checked + .slider:before{transform:translateX(22px)}
+.switch input:disabled + .slider{opacity:.35;cursor:not-allowed}
+input[type=time]{background:#fff;border:1px solid #D0D7DE;border-radius:8px;color:var(--fg);
+                 font-size:16px;padding:7px 10px;font-variant-numeric:tabular-nums}
+input[type=time]:disabled{opacity:.35}
+select{background:#fff;border:1px solid #D0D7DE;border-radius:8px;color:var(--fg);
+       font-size:16px;padding:8px 10px;min-width:112px}
+
+.msg{margin-top:10px;font-size:14px;color:var(--dim);min-height:20px}
+
+/* ---------- 了解页：说明 / 公式 / 对照表 ---------- */
+.note{font-size:13px;color:var(--dim);line-height:1.75;margin:8px 0 12px}
+.note b{color:var(--fg)}
+.formula{background:var(--cell);border-radius:8px;padding:11px 12px;font-size:13px;
+         line-height:1.7;text-align:center;margin:8px 0 12px;overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:13px;margin:6px 0 12px}
+th,td{padding:8px 5px;text-align:center;border-bottom:1px solid var(--line)}
+th{color:var(--dim);font-weight:600;font-size:12px}
+th:first-child,td:first-child{text-align:left}
+/* 表头单位 / 单元格副信息（如"轻度"下面的 AQI 区间）：换到第二行、弱化，
+   避免 5 列表的头把数字列挤变形 */
+th .u,td .u{display:block;font-size:10px;color:var(--mute);font-weight:400}
+table tr:last-child td{border-bottom:0}
+.src{font-size:11px;color:var(--mute);margin:0 0 12px}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;vertical-align:-1px}
+.dot.g{background:var(--green)} .dot.c{background:var(--cyan)}
+.dot.a{background:var(--amber)} .dot.r{background:var(--red)}
+
+/* ---------- 横幅与提示 ---------- */
+.warn{background:#E8F1FF;color:#1D4ED8;padding:11px 16px;
+      font-size:14px;line-height:1.6;text-align:center}
+.warn.hide{display:none}
+#filterBanner{background:#FDECEC;color:var(--red-t);border-radius:16px;
+              margin-top:12px;box-shadow:var(--shadow)}
+#toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%) translateY(20px);
+       background:rgba(0,0,0,.82);color:#fff;padding:11px 18px;border-radius:10px;
+       font-size:14px;opacity:0;pointer-events:none;transition:.25s;
+       max-width:80vw;text-align:center;z-index:20}
+#toast.on{opacity:1;transform:translateX(-50%)}
+
+</style>
+</head>
+<body>
+
+<div id="libwarn" class="warn hide">
+  MQTT 组件加载失败：本页需要联网（CDN 取 mqtt.js）。请检查手机网络后刷新。
+</div>
+
+<header>
+  <h1>空气净化系统</h1>
+  <div class="hd-right">
+    <select id="devsel" class="hide"></select>
+    <span id="fresh" class="badge off">数据无效</span>
+    <span id="badge" class="badge wait">连接中</span>
+  </div>
+</header>
+
+<nav class="tabs">
+  <button class="tab on" data-tab="p1">监测</button>
+  <button class="tab" data-tab="p2">控制</button>
+  <button class="tab" data-tab="p3">定时</button>
+  <button class="tab" data-tab="p4">了解</button>
+</nav>
+
+<main>
+
+<!-- 滤纸到期横幅：放在所有 tab 之外，任何页面都能看到 -->
+<div id="filterBanner" class="warn hide">
+  滤纸已到期，寿命计时已暂停。<br>
+  更换滤纸后请到「监测」页点击 <b>更换滤纸 · 重置寿命</b>，才会开始新的周期。
+</div>
+
+<!-- ============ 监测 ============ -->
+<section id="p1" class="page on">
+  <!-- 综合评级放最上方：它是整页的"结论"，具体读数往下看 -->
+  <div id="aqiCard" class="card aqiwrap aq0">
+    <div class="card-h">综合评级</div>
+    <div class="aqi" id="aqi">--</div>
+  </div>
+
+  <div class="card">
+    <div class="row"><span class="k">温度</span><span class="v" id="temp">--</span></div>
+    <div class="row"><span class="k">湿度</span><span class="v" id="hum">--</span></div>
+    <div class="row"><span class="k">甲醛</span><span class="v" id="hcho">--</span></div>
+    <div class="row"><span class="k">PM1.0</span><span class="v" id="pm1">--</span></div>
+    <div class="row"><span class="k">PM2.5</span><span class="v" id="pm25">--</span></div>
+    <div class="row"><span class="k">PM10</span><span class="v" id="pm10">--</span></div>
+    <div class="row"><span class="k">传感器</span><span class="v" id="ok">--</span></div>
+  </div>
+
+  <div class="card">
+    <div class="card-h">颗粒物个数 / 0.1L</div>
+    <div class="grid">
+      <div class="cell"><span>&gt;0.3μm</span><span id="c03">--</span></div>
+      <div class="cell"><span>&gt;0.5μm</span><span id="c05">--</span></div>
+      <div class="cell"><span>&gt;1.0μm</span><span id="c10">--</span></div>
+      <div class="cell"><span>&gt;2.5μm</span><span id="c25">--</span></div>
+      <div class="cell"><span>&gt;5.0μm</span><span id="c50">--</span></div>
+      <div class="cell"><span>&gt;10μm</span><span id="c100">--</span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-h">滤纸寿命</div>
+    <div class="row"><span class="k">更换周期</span><span class="v" id="fCycle">--</span></div>
+    <div class="row"><span class="k">剩余寿命</span><span class="v" id="fRemain">--</span></div>
+    <div class="row"><span class="k">已累计运行</span><span class="v" id="fUsed">--</span></div>
+    <div class="ftrack"><div id="fBar" class="ffill ok"></div></div>
+    <div class="bar" style="margin-top:14px">
+      <button id="bFilterReset" class="danger">更换滤纸 · 重置寿命</button>
+    </div>
+    <div class="fmsg" id="fmsg"></div>
+  </div>
+</section>
+
+<!-- ============ 控制 ============ -->
+<section id="p2" class="page">
+  <!-- 运行状态放最上方：PWM / 转速是"当前实际在跑什么"，先看到它再决定要不要调 -->
+  <div class="card">
+    <div class="card-h">运行状态</div>
+    <div class="row"><span class="k">风扇 PWM</span><span class="v" id="pwm">--</span></div>
+    <div class="row"><span class="k">风扇转速</span><span class="v" id="rpm">--</span></div>
+  </div>
+
+  <div class="card">
+    <div class="card-h">模式</div>
+    <div class="bar">
+      <button id="bAuto">AUTO</button>
+      <button id="bMan">MANUAL</button>
+    </div>
+
+    <div class="card-h">手动档位 · 仅手动模式可调</div>
+    <div class="bar">
+      <button class="lv" data-lv="1">1</button>
+      <button class="lv" data-lv="2">2</button>
+      <button class="lv" data-lv="3">3</button>
+      <button class="lv" data-lv="4">4</button>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <span class="k">档位对应风速</span><span class="v">0% / 35% / 70% / 100%</span>
+    </div>
+  </div>
+
+</section>
+
+<!-- ============ 定时 ============ -->
+<section id="p3" class="page">
+  <div class="card">
+    <div class="card-h">定时关机</div>
+
+    <div class="trow">
+      <span>启用定时</span>
+      <label class="switch">
+        <input type="checkbox" id="timerSw">
+        <span class="slider"></span>
+      </label>
+    </div>
+
+    <div class="row"><span class="k">设备时间</span><span class="v" id="devTime">--</span></div>
+    <div class="row"><span class="k">当前状态</span><span class="v" id="tcur">--</span></div>
+
+    <div class="row" style="margin-top:12px">
+      <span class="k">关机时刻</span>
+      <span class="v"><input type="time" id="inTime" value="23:00"></span>
+    </div>
+    <div class="row">
+      <span class="k">重复</span>
+      <span class="v">
+        <select id="inRepeat">
+          <option value="1">每天</option>
+          <option value="0">仅一次</option>
+        </select>
+      </span>
+    </div>
+    <div class="row"><span class="k">距离关机</span><span class="v" id="timerDiff">--</span></div>
+
+    <div class="msg" id="timerMsg"></div>
+  </div>
+</section>
+
+<!-- ============ 了解 ============ -->
+<section id="p4" class="page">
+  <div class="card">
+    <div class="card-h">本设备怎么评级</div>
+    <p class="note">
+      综合评级取四种污染物<b>分指数</b>中的最大值 —— 哪一项最差，整体就按那一项算，
+      这是 AQI 的标准做法（HJ 633-2012）。
+    </p>
+    <div class="formula">AQI = max( I<sub>PM1.0</sub>, I<sub>PM2.5</sub>, I<sub>PM10</sub>, I<sub>HCHO</sub> )</div>
+    <p class="note">
+      传感器掉线的那一路会被<b>清零</b>，不再参与计算 —— 免得拿冻结的旧读数
+      继续影响结果和风扇调速。
+    </p>
+  </div>
+
+  <div class="card">
+    <div class="card-h">AQI 分级（4 档）</div>
+    <table>
+      <tr><th>AQI</th><th>等级</th><th>颜色</th></tr>
+      <tr><td>0 ~ 50</td><td>优</td><td><span class="dot g"></span>绿</td></tr>
+      <tr><td>51 ~ 100</td><td>良</td><td><span class="dot c"></span>青</td></tr>
+      <tr><td>101 ~ 150</td><td>轻度</td><td><span class="dot a"></span>橙</td></tr>
+      <tr><td>&gt; 150</td><td>中重</td><td><span class="dot r"></span>红</td></tr>
+    </table>
+    <p class="src">依据：HJ 633-2012《环境空气质量指数(AQI)技术规定》，本设备简化为 4 档</p>
+    <p class="note">
+      国标在 150 以上还分中度（151~200）、重度（201~300）、严重（&gt;300）三档，
+      本设备把它们<b>合并为一档「中重」</b>：屏幕那一行留给等级文字的宽度只有
+      2~3 个汉字，写成「重度污染」会画到区域外。这一档的颜色也统一用红。
+    </p>
+  </div>
+
+  <div class="card">
+    <div class="card-h">各档浓度区间（4 档）</div>
+    <table>
+      <tr>
+        <th>等级<span class="u">AQI</span></th>
+        <th>PM1.0<span class="u">μg/m³</span></th>
+        <th>PM2.5<span class="u">μg/m³</span></th>
+        <th>PM10<span class="u">μg/m³</span></th>
+        <th>HCHO<span class="u">mg/m³</span></th>
+      </tr>
+      <tr>
+        <td>优<span class="u">0~50</span></td>
+        <td>≤35</td><td>≤35</td><td>≤50</td><td>≤0.10</td>
+      </tr>
+      <tr>
+        <td>良<span class="u">51~100</span></td>
+        <td>35~75</td><td>35~75</td><td>50~150</td><td>0.10~0.20</td>
+      </tr>
+      <tr>
+        <td>轻度<span class="u">101~150</span></td>
+        <td>75~115</td><td>75~115</td><td>150~250</td><td>0.20~0.30</td>
+      </tr>
+      <tr>
+        <td>中重<span class="u">&gt;150</span></td>
+        <td>&gt;115</td><td>&gt;115</td><td>&gt;250</td><td>&gt;0.30</td>
+      </tr>
+    </table>
+    <p class="src">
+      颗粒物：HJ 633-2012 的分段断点（24 小时平均）；PM1.0 无国标，沿用 PM2.5 的断点。<br>
+      甲醛：GB/T 18883 的 1 小时限值 0.10 mg/m³ 对应 50 分。
+    </p>
+    <p class="note">
+      档位取<b>最差</b>的那一项：任一污染物落进哪一档，综合就是哪一档
+      （AQI = 四个分指数的最大值）。<br>
+      区间下界归上一档 —— 例如 PM2.5 正好 35 μg/m³ 算「优」（判据是 AQI ≤ 50）。<br>
+      「中重」档内 AQI 数值仍会继续升高，算法与上面同一套分段线性插值。
+    </p>
+  </div>
+
+  <div class="card">
+    <div class="card-h">几点说明</div>
+    <p class="note">
+      1. 本设备的颗粒物读数来自 PMS5003（激光散射法），与国控站的
+      β 射线法原理不同，数值会有偏差，看趋势比看绝对值更合适。
+    </p>
+    <p class="note">
+      2. 甲醛用的是 ZE08 电化学模组（mg/m³）。国标 AQI 体系里没有甲醛分指数，
+      本设备按 GB/T 18883 的 1 小时限值 0.10 mg/m³ 做参考分级（对应 50 分），
+      其结果仅供参考。
+    </p>
+    <p class="note">
+      3. PM2.5 的国标 24 小时一级限值是 35 μg/m³、二级 75 μg/m³
+      （GB 3095-2012）；WHO 2021 指南收紧到 24 小时 15 μg/m³，
+      比国标严格得多，两台设备对着看会有明显差异。
+    </p>
+    <p class="note">
+      4. 读数每 2 秒更新一次；「数据更新」显示<b>无效</b>（红色）说明超过 6 秒
+      没收到新数据 —— 设备掉线或网络不稳，此时上面的读数已经不新鲜了。
+    </p>
+  </div>
+</section>
+
+</main>
+
+<div id="toast"></div>
+
+<script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+<script>
+/* =========================================================================
+   写死的连接参数
+   设备端在 cloud_app.h 里也有一份：改 Topic 前缀时两边必须一致，
+   否则本页收不到任何数据（表现为"一直连接中"）。
+   ========================================================================= */
+var CONSOLE_PREFIX = 'airbox';
+var CONSOLE_BROKER = 'wss://broker.emqx.io:8084/mqtt';
+
+var devices = {};        // cid -> { data, online, rxAt }
+var cur = null;          // 当前正在看的设备 cid
+var client = null;
+
+/* =========================================================================
+   小工具
+   ========================================================================= */
+function $(id){ return document.getElementById(id); }
+
+function toast(msg){
+  var t = $('toast');
+  t.textContent = msg;
+  t.className = 'on';
+  clearTimeout(t._h);
+  t._h = setTimeout(function(){ t.className = ''; }, 1600);
+}
+
+function badge(cls, text){
+  var b = $('badge');
+  var c = 'badge' + (cls ? ' ' + cls : '');
+  if (b.className !== c) b.className = c;
+  if (b.textContent !== text) b.textContent = text;
+}
+
+/* 只在内容真的变了才写 DOM：设备每 2 秒来一帧，无条件重写会让浏览器白白重排 */
+function setTxt(id, val){
+  var el = $(id);
+  if (!el) return;
+  var s = String(val);
+  if (el.textContent !== s) el.textContent = s;
+}
+
+function setCls(id, cls){
+  var el = $(id);
+  if (el && el.className !== cls) el.className = cls;
+}
+
+function fmt(v, n, dash){
+  if (v === undefined || v === null || isNaN(v)) return dash || '--';
+  return Number(v).toFixed(n);
+}
+
+/* 秒 -> "3 天 4 小时" / "5 小时 12 分" */
+function humanSec(sec){
+  if (sec === undefined || sec === null || isNaN(sec)) return '--';
+  sec = Math.max(0, Math.floor(sec));
+  var d = Math.floor(sec / 86400);
+  var h = Math.floor((sec % 86400) / 3600);
+  if (d > 0) return d + ' 天 ' + h + ' 小时';
+  var m = Math.floor((sec % 3600) / 60);
+  return h + ' 小时 ' + m + ' 分';
+}
+
+function pad2(n){
+  n = Number(n) || 0;
+  return (n < 10 ? '0' : '') + n;
+}
+
+/* =========================================================================
+   Tab
+   ========================================================================= */
+var LS_TAB = 'airbox_remote_tab';
+
+function selectTab(name){
+  var tabs = document.getElementsByClassName('tab');
+  for (var i = 0; i < tabs.length; i++) {
+    tabs[i].className = 'tab' + (tabs[i].getAttribute('data-tab') === name ? ' on' : '');
+  }
+  var pages = document.getElementsByClassName('page');
+  for (var j = 0; j < pages.length; j++) {
+    pages[j].className = 'page' + (pages[j].id === name ? ' on' : '');
+  }
+  try { localStorage.setItem(LS_TAB, name); } catch (e) {}
+}
+
+(function initTabs(){
+  var tabs = document.getElementsByClassName('tab');
+  for (var i = 0; i < tabs.length; i++) {
+    tabs[i].onclick = function(){ selectTab(this.getAttribute('data-tab')); };
+  }
+  var saved = null;
+  try { saved = localStorage.getItem(LS_TAB); } catch (e) {}
+  if (saved) selectTab(saved);
+})();
+
+/* =========================================================================
+   连接（写死参数，打开即用，没有任何需要填的东西）
+   ========================================================================= */
+function connect(){
+  if (typeof mqtt === 'undefined') {
+    $('libwarn').className = 'warn';
+    badge('off', '组件缺失');
+    return;
+  }
+
+  if (client) { try { client.end(true); } catch (e) {} client = null; }
+  badge('wait', '连接中');
+
+  client = mqtt.connect(CONSOLE_BROKER, {
+    // 客户端 ID 必须和设备的不一样，否则同 ID 会互相踢下线
+    clientId: 'web-' + Math.random().toString(16).slice(2, 10),
+    keepalive: 30,
+    clean: true,
+    reconnectPeriod: 3000,
+    connectTimeout: 10000
+  });
+
+  client.on('connect', function(){
+    badge('', '已连接');
+    // 通配订阅：设备 ID 由 MAC 生成，页面不需要预先知道是哪一台
+    client.subscribe(CONSOLE_PREFIX + '/+/up',     { qos: 0 });
+    client.subscribe(CONSOLE_PREFIX + '/+/status', { qos: 1 });
+  });
+
+  client.on('reconnect', function(){ badge('wait', '重连中'); });
+  client.on('close',     function(){ badge('off',  '已断开'); });
+  client.on('error',     function(){ badge('off',  '连接失败'); });
+  client.on('message',   onMessage);
+}
+
+function onMessage(topic, payload){
+  /* 主题固定三段：<prefix>/<设备ID>/<up|down|status> */
+  var part = topic.split('/');
+  if (part.length < 3) return;
+
+  var cid  = part[1];
+  var kind = part[2];
+
+  var obj;
+  try { obj = JSON.parse(payload.toString()); } catch (e) { return; }
+
+  var dev = devices[cid];
+  var isNew = !dev;                          // 新发现的设备，要更新切换下拉框
+  if (isNew) dev = devices[cid] = {};
+
+  if (kind === 'up') {
+    dev.data = obj;
+    dev.rxAt = Date.now();
+    if (!cur) cur = cid;                     // 自动选中第一个发现的设备
+    if (cid === cur) renderData();
+  } else if (kind === 'status') {
+    dev.online = !!obj.online;               // retained：一订阅就能收到当前状态
+    if (!cur) cur = cid;
+    if (cid === cur) renderData();
+  }
+
+  if (isNew) renderDevices();
+}
+
+function publishDown(obj, okMsg){
+  if (!client || !client.connected) { toast('还没连上云端'); return false; }
+  if (!cur) { toast('还没发现设备'); return false; }
+
+  var topic = CONSOLE_PREFIX + '/' + cur + '/down';
+  client.publish(topic, JSON.stringify(obj), { qos: 1 }, function(err){
+    toast(err ? ('发送失败：' + err.message) : okMsg);
+  });
+  return true;
+}
+
+/* =========================================================================
+   渲染
+   ========================================================================= */
+/* 发现多台设备时才显示下拉框，供切换 */
+function renderDevices(){
+  var sel  = $('devsel');
+  var keys = Object.keys(devices);
+
+  if (keys.length <= 1) { sel.className = 'hide'; return; }
+
+  keys.sort();
+  var html = '';
+  for (var i = 0; i < keys.length; i++) {
+    html += '<option value="' + keys[i] + '"' +
+            (keys[i] === cur ? ' selected' : '') + '>' + keys[i] + '</option>';
+  }
+  if (sel.innerHTML !== html) sel.innerHTML = html;
+  sel.className = '';
+}
+
+/* 界面回到"没有数据"的样子（换设备时必须清干净，否则旧读数会挂着像实时数据） */
+function resetUi(){
+  ['temp','hum','hcho','pm1','pm25','pm10','ok','pwm','rpm',
+   'c03','c05','c10','c25','c50','c100','aqi','fCycle','fRemain','fUsed',
+   'devTime','tcur','timerDiff'].forEach(function(id){
+    setTxt(id, '--');
+  });
+  setCls('fRemain', 'v');
+  setFresh(false);           // 换设备时先按"数据无效"显示，收到帧后自然转绿
+  setCls('aqiCard', 'card aqiwrap aq0');
+}
+
+function renderData(){
+  var dev = devices[cur] || {};
+  var d   = dev.data;
+
+  if (!d) return;
+
+  /* ---- 环境 ---- */
+  setTxt('temp', d.aht_ok  ? fmt(d.temp, 2) + ' °C'      : '--');
+  setTxt('hum',  d.aht_ok  ? fmt(d.hum,  2) + ' %RH'     : '--');
+  setTxt('hcho', d.hcho_ok ? fmt(d.hcho, 3) + ' mg/m³'   : '--');
+  setTxt('pm1',  d.pm_ok ? d.pm1  + ' μg/m³' : '--');
+  setTxt('pm25', d.pm_ok ? d.pm25 + ' μg/m³' : '--');
+  setTxt('pm10', d.pm_ok ? d.pm10 + ' μg/m³' : '--');
+
+  // 三路传感器是否都在线
+  var bad = [];
+  if (d.aht_ok  === false) bad.push('温湿度');
+  if (d.pm_ok   === false) bad.push('颗粒物');
+  if (d.hcho_ok === false) bad.push('甲醛');
+  setTxt('ok', bad.length ? (bad.join(' / ') + ' 掉线') : '全部正常');
+
+  /* ---- 颗粒物个数（0.1L）---- */
+  var c = d.counts || {};
+  var hasCounts = d.pm_ok && c['0_3'] !== undefined;
+  setTxt('c03',  hasCounts ? c['0_3'] : '--');
+  setTxt('c05',  hasCounts ? c['0_5'] : '--');
+  setTxt('c10',  hasCounts ? c['1_0'] : '--');
+  setTxt('c25',  hasCounts ? c['2_5'] : '--');
+  setTxt('c50',  hasCounts ? c['5_0'] : '--');
+  setTxt('c100', hasCounts ? c['10']  : '--');
+
+  /* ---- 综合评级：文字保持纯黑，用背后的色晕表达等级 ---- */
+  if (d.level_txt !== undefined) {
+    setTxt('aqi', d.level_txt + '　AQI ' + Math.round(d.aqi));
+    setCls('aqiCard', 'card aqiwrap aq' + (d.level || 0));
+  }
+
+  /* ---- 滤纸寿命 ---- */
+  renderFilter(d.filter || {});
+
+  /* ---- 设备时间与定时 ---- */
+  var t = d.time  || {};
+  var tm = d.timer || {};
+  setTxt('devTime', t.valid ? (t.hhmm || '--:--') : '未对时');
+  renderTimer(tm);
+  syncTimerInputs(tm);
+
+  /* ---- 运行状态 ---- */
+  var f = d.fan || {};
+  setTxt('pwm', (f.pwm === undefined) ? '--' : f.pwm + ' %');
+  setTxt('rpm', (f.rpm === undefined) ? '--' : f.rpm + ' RPM');
+  renderFan(f);
+}
+
+function renderFilter(fl){
+  setTxt('fCycle',  (fl.cycle_days === undefined) ? '--' : fl.cycle_days + ' 天');
+  setTxt('fRemain', humanSec(fl.remain_sec));
+  setTxt('fUsed',   humanSec(fl.used_sec));
+
+  var pct = Number(fl.remain_pct);
+  if (isNaN(pct)) pct = 0;
+  var bar = $('fBar');
+  var w   = Math.max(0, Math.min(100, pct)) + '%';
+  if (bar.style.width !== w) bar.style.width = w;
+
+  // 剩余越多越绿；低于 30% 转橙、到期转红（与进度条同一套语义）
+  var cls = 'ffill ' + (fl.expired ? 'bad' : (pct < 30 ? 'warn' : 'ok'));
+  if (bar.className !== cls) bar.className = cls;
+
+  var exp = !!fl.expired;
+  setCls('fRemain', 'v' + (exp ? ' expired' : ''));
+  $('filterBanner').className = 'warn' + (exp ? '' : ' hide');
+}
+
+function renderTimer(tm){
+  if (tm.available === false) {
+    setTxt('tcur', '设备未对时，不可用');
+  } else if (tm.enabled) {
+    setTxt('tcur', '已开启 · ' + (tm.repeat === 1 ? '每天 ' : '仅一次 ') +
+                   pad2(tm.hour) + ':' + pad2(tm.minute));
+  } else {
+    setTxt('tcur', '未开启');
+  }
+
+  var sw = $('timerSw');
+  sw.checked  = !!tm.enabled;
+  sw.disabled = (tm.available === false);
+
+  setTxt('timerDiff', (tm.enabled && tm.remain_min !== undefined)
+                        ? (Math.floor(tm.remain_min / 60) + ' 小时 ' +
+                           (tm.remain_min % 60) + ' 分')
+                        : '--');
+}
+
+/* 只在设备侧的值真的变了、且用户没在操作时才回填表单，避免打字被打断 */
+var timerInit = false;
+function syncTimerInputs(tm){
+  if (timerInit) return;
+  if (tm.hour === undefined) return;
+
+  timerInit = true;
+  $('inTime').value   = pad2(tm.hour) + ':' + pad2(tm.minute);
+  $('inRepeat').value = String(tm.repeat === 0 ? 0 : 1);
+}
+
+/* 风扇模式/档位高亮。
+   点按钮后设备要等下一个上报周期（最多 2 秒）才把新状态带回来，
+   这段时间里如果照实渲染，高亮会先跳回旧档再跳回来 —— 所以按下就先本地生效，
+   并在一个短窗口内忽略回帧（乐观更新）。 */
+var curFan = { mode: 'auto', level: 1 };
+var pendingUntil = 0;
+
+function paintFan(){
+  var manual = (curFan.mode === 'manual');
+  $('bAuto').className = manual ? '' : 'on';
+  $('bMan').className  = manual ? 'on' : '';
+
+  var lvBtns = document.getElementsByClassName('lv');
+  for (var i = 0; i < lvBtns.length; i++) {
+    var on = manual && (String(curFan.level) === lvBtns[i].getAttribute('data-lv'));
+    lvBtns[i].className = 'lv' + (on ? ' on' : '');
+    // 自动档下档位不该可调：置灰（button:disabled 的 opacity .35）并屏蔽点击。
+    // 这与设备本地按键一致 —— 自动模式下按调速键本来就被忽略。
+    lvBtns[i].disabled  = !manual;
+  }
+}
+
+function localFan(mode, level){
+  if (mode)  curFan.mode  = mode;
+  if (level) curFan.level = level;
+  pendingUntil = Date.now() + 900;
+  paintFan();
+}
+
+function renderFan(f){
+  if (Date.now() < pendingUntil) return;   // 刚点过按钮，让本地状态先站着
+  curFan.mode  = f.mode;
+  curFan.level = f.level;
+  paintFan();
+}
+
+/* 数据有效性：设备正常每 2 秒发一帧，超过 6 秒没收到就算无效
+   顶部徽章显示结论（绿=数据有效 / 红=数据无效），与"已连接"同款胶囊样式 */
+var FRESH_OK_SEC = 6;
+
+function setFresh(ok){
+  var el = $('fresh');
+  if (!el) return;
+
+  var cls = 'badge' + (ok ? '' : ' off');
+  if (el.className !== cls) el.className = cls;
+
+  var txt = ok ? '数据有效' : '数据无效';
+  if (el.textContent !== txt) el.textContent = txt;
+}
+
+function tickFresh(){
+  var dev = devices[cur];
+  if (!dev || !dev.rxAt) { setFresh(false); return; }
+
+  var age = Math.round((Date.now() - dev.rxAt) / 1000);
+  setFresh(age <= FRESH_OK_SEC);
+}
+
+/* =========================================================================
+   操作
+   ========================================================================= */
+$('bAuto').onclick = function(){
+  localFan('auto');
+  publishDown({ cmd:'fan', mode:'auto' }, '已发送：自动');
+};
+$('bMan').onclick = function(){
+  localFan('manual');
+  publishDown({ cmd:'fan', mode:'manual' }, '已发送：手动');
+};
+
+(function initLevels(){
+  var bs = document.getElementsByClassName('lv');
+  for (var i = 0; i < bs.length; i++) {
+    bs[i].onclick = function(){
+      // 自动档下按钮是 disabled 的，这里再兜一道：
+      // 想改风速先按 MANUAL —— "档位"只属于手动模式，不该顺手把模式也改掉
+      if (curFan.mode !== 'manual') return;
+
+      var lv = parseInt(this.getAttribute('data-lv'), 10);
+      localFan(null, lv);        // 只改档位（模式已是手动）
+      publishDown({ cmd:'fan', mode:'manual', level: lv }, '已发送：' + lv + ' 档');
+    };
+  }
+})();
+
+/* ---- 定时关机 ---- */
+$('timerSw').onchange = function(){
+  var on = this.checked;
+  $('timerMsg').textContent = '';
+
+  if (!on) {
+    publishDown({ cmd:'timer', enable:false }, '已发送：关闭定时');
+    return;
+  }
+
+  var v = $('inTime').value;
+  if (!v || v.indexOf(':') < 0) {
+    this.checked = false;
+    $('timerMsg').textContent = '请先选一个时间';
+    return;
+  }
+  var hm = v.split(':');
+  publishDown({
+    cmd:'timer', enable:true,
+    hour: parseInt(hm[0], 10), minute: parseInt(hm[1], 10),
+    repeat: parseInt($('inRepeat').value, 10)
+  }, '已发送：' + ($('inRepeat').value === '1' ? '每天 ' : '仅一次 ') + v + ' 关机');
+};
+
+/* 改了时刻或重复方式就重发一次（开关已开着才会真的生效） */
+$('inTime').onchange = function(){ if ($('timerSw').checked) $('timerSw').onchange.call($('timerSw')); };
+$('inRepeat').onchange = function(){ if ($('timerSw').checked) $('timerSw').onchange.call($('timerSw')); };
+
+/* ---- 滤纸 ---- */
+$('bFilterReset').onclick = function(){
+  if (!confirm('确认已更换滤纸？这会把已用时间清零。')) return;
+  $('fmsg').textContent = '';
+  publishDown({ cmd:'filter', reset:true }, '已发送：滤纸寿命重置');
+};
+
+/* ---- 切换设备 ---- */
+$('devsel').onchange = function(){
+  cur = this.value;
+  resetUi();
+  renderDevices();
+  renderData();
+};
+
+/* =========================================================================
+   刷新循环
+   数据本身由 MQTT 推送（设备每 2 秒一帧），这里只负责"新鲜度"这类
+   跟时间有关的显示；页面切到后台就整段跳过，省电。
+   ========================================================================= */
+setInterval(function(){
+  if (document.hidden) return;
+  tickFresh();
+}, 1000);
+
+document.addEventListener('visibilitychange', function(){
+  if (!document.hidden) tickFresh();
+});
+
+connect();
+</script>
+</body>
+</html>
